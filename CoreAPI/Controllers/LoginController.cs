@@ -1,11 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Data.SqlClient;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Security.Claims;
 using System.Text;
 using System.Threading.Tasks;
 using CoreAPI.Model;
+using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -24,7 +27,40 @@ namespace CoreAPI.Controllers
         {
             _config = config;
         }
-        
+
+
+        [Authorize]
+        [HttpGet("GetValue")]
+        public ActionResult<IEnumerable<string>> Get()
+        {
+            //return new string[] { _config["Jwt:Key"], _config["Jwt:Issuer"], _config["ConnectionStrings:Default"] };
+            var identity = HttpContext.User.Identity as ClaimsIdentity;
+            IList<Claim> claim = identity.Claims.ToList();
+            return new string[] { claim[0].Value, claim[1].Value, claim[2].Value };
+        }
+
+
+        [HttpPost]
+        public IActionResult Post([FromBody] UserModel data)
+        {
+
+            UserModel login = new UserModel();
+            login.UserID = data.UserID;
+            login.Password = data.Password;
+            IActionResult response = Unauthorized();
+
+            var user = AuthenticateUser(login);
+            if (user != null)
+            {
+                var tokenStr = GenerateJasonWebToken(user);
+                response = Ok(new { token = tokenStr });
+            }
+            return response;
+
+            
+        }
+
+       
         private string GenerateJasonWebToken(UserModel user)
         {
             var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]));
@@ -32,10 +68,9 @@ namespace CoreAPI.Controllers
 
             var claims = new[]
             {
-                new Claim(JwtRegisteredClaimNames.Sub,user.UserName),
-                new Claim(JwtRegisteredClaimNames.Email,user.EmailAddress),
-                new Claim(JwtRegisteredClaimNames.Jti,Guid.NewGuid().ToString()),
-                new Claim(JwtRegisteredClaimNames.GivenName,"Testing")
+                new Claim(JwtRegisteredClaimNames.Sub,user.UserID),
+                new Claim(JwtRegisteredClaimNames.GivenName,user.UserName),
+                new Claim(JwtRegisteredClaimNames.Jti,Guid.NewGuid().ToString())
             };
             var token = new JwtSecurityToken(
                 issuer: _config["Jwt:Issuer"],
@@ -50,45 +85,16 @@ namespace CoreAPI.Controllers
 
         private UserModel AuthenticateUser(UserModel login)
         {
-            UserModel User = null;
-            if (login.UserName == "manager" && login.Password == "1234")
+            string connstr = _config["ConnectionStrings:Default"].ToString();
+
+            using (IDbConnection conn = new SqlConnection(connstr))
             {
-                User = new UserModel
-                {
-                    UserName = "manager",
-                    EmailAddress = "abc@abc.com"
-                };
+                string query = "SELECT UserID, UserName, Email FROM AppUser Where UserID = @UserID AND Password = @Password ";
+                UserModel usr = SqlMapper.Query<UserModel>(conn, query, new { login.UserID,login.Password  }).FirstOrDefault();
+
+                return usr;
             }
-            return User;
-        }
 
-        [HttpPost]
-        public IActionResult Post([FromBody] UserModel data)
-        {
-            UserModel login = new UserModel();
-            login.UserName = data.UserName;
-            login.Password = data.Password;
-            IActionResult response = Unauthorized();
-
-            var user = AuthenticateUser(login);
-            if (user != null)
-            {
-                var tokenStr = GenerateJasonWebToken(user);
-                response = Ok(new { token = tokenStr });
-            }
-            return response;
-
-            //var identity = HttpContext.User.Identity as ClaimsIdentity;
-            //IList<Claim> claim = identity.Claims.ToList();
-            //string str = claim[0].Value + ", " + claim[1].Value + ", " + claim[2].Value + "," + claim[3].Value;
-            //return str;
-        }
-
-        [Authorize]
-        [HttpGet("GetValue")]
-        public ActionResult<IEnumerable<string>> Get()
-        {
-            return new string[] { _config["Jwt:Key"], _config["Jwt:Issuer"], _config["ConnectionString:Default"] };
         }
     }
 }
